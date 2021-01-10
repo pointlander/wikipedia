@@ -14,7 +14,27 @@ import (
 	"os/exec"
 
 	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/analysis"
+	"github.com/blevesearch/bleve/analysis/char/html"
+	"github.com/blevesearch/bleve/registry"
 )
+
+// Name is the name of the html filter
+const Name = "custom_html"
+
+// AnalyzerConstructor html filter
+func AnalyzerConstructor(config map[string]interface{}, cache *registry.Cache) (*analysis.Analyzer, error) {
+	htmlCharFilter, err := cache.CharFilterNamed(html.Name)
+	if err != nil {
+		return nil, err
+	}
+	rv := analysis.Analyzer{
+		CharFilters: []analysis.CharFilter{
+			htmlCharFilter,
+		},
+	}
+	return &rv, nil
+}
 
 // Container is the container id
 var Container = flag.String("id", "", "the container id")
@@ -23,6 +43,10 @@ var Container = flag.String("id", "", "the container id")
 type Page struct {
 	Title string `xml:"title"`
 	Text  string `xml:"revision>text"`
+}
+
+func init() {
+	registry.RegisterAnalyzer(Name, AnalyzerConstructor)
 }
 
 func main() {
@@ -42,22 +66,42 @@ func main() {
 	reader := bzip2.NewReader(input)
 	decoder := xml.NewDecoder(reader)
 	token, err := decoder.Token()
+	done := make(chan Page, 8)
+	convert := func(doc Page) {
+		text, err := Convert(doc.Text)
+		if err != nil {
+			panic(err)
+		}
+		doc.Text = string(text)
+		done <- doc
+	}
+	count := 0
 	for err == nil {
 		switch element := token.(type) {
 		case xml.StartElement:
 			if element.Name.Local == "page" {
 				var page Page
 				decoder.DecodeElement(&page, &element)
-				text, err := Convert(page.Text)
-				if err != nil {
-					panic(err)
+				if count > 64 {
+					text := <-done
+					fmt.Println("---------------------")
+					fmt.Println(text.Text)
+					index.Index(text.Title, text.Text)
+					go convert(page)
+				} else {
+					go convert(page)
 				}
-				fmt.Println("---------------------")
-				fmt.Println(string(text))
-				index.Index(page.Title, page)
+				count++
 			}
 		}
 		token, err = decoder.Token()
+	}
+
+	for i := 0; i < 64; i++ {
+		text := <-done
+		fmt.Println("---------------------")
+		fmt.Println(string(text.Text))
+		index.Index(text.Title, text.Text)
 	}
 }
 
