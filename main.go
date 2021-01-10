@@ -12,6 +12,9 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
+	"strings"
 
 	"github.com/blevesearch/bleve"
 	"github.com/blevesearch/bleve/analysis"
@@ -36,8 +39,14 @@ func AnalyzerConstructor(config map[string]interface{}, cache *registry.Cache) (
 	return &rv, nil
 }
 
-// Container is the container id
-var Container = flag.String("id", "", "the container id")
+var (
+	// Convert to wiki to html
+	ConvertFlag = flag.Bool("convert", false, "convert to wiki to html")
+	// Container is the container id
+	Container = flag.String("id", "", "the container id")
+	// WikiRegex is a regex for wiki syntax
+	WikiRegex = regexp.MustCompile("[^A-Za-z.!?,;]+")
+)
 
 // Page is a wikitext page
 type Page struct {
@@ -45,12 +54,13 @@ type Page struct {
 	Text  string `xml:"revision>text"`
 }
 
-func init() {
-	registry.RegisterAnalyzer(Name, AnalyzerConstructor)
-}
-
+// 8526625 63.518098555505276
 func main() {
 	flag.Parse()
+
+	if *ConvertFlag {
+		registry.RegisterAnalyzer(Name, AnalyzerConstructor)
+	}
 
 	mapping := bleve.NewIndexMapping()
 	index, err := bleve.New("wiki.bleve", mapping)
@@ -75,23 +85,42 @@ func main() {
 		doc.Text = string(text)
 		done <- doc
 	}
+	wordIndex := make(map[string][]int)
 	count := 0
+LOOP:
 	for err == nil {
 		switch element := token.(type) {
 		case xml.StartElement:
 			if element.Name.Local == "page" {
 				var page Page
 				decoder.DecodeElement(&page, &element)
-				if count > 64 {
-					text := <-done
-					fmt.Println("---------------------")
-					fmt.Println(text.Text)
-					index.Index(text.Title, text.Text)
-					go convert(page)
-				} else {
-					go convert(page)
+				if *ConvertFlag {
+					if count > 64 {
+						text := <-done
+						fmt.Println("---------------------")
+						fmt.Println(text.Text)
+						index.Index(text.Title, text.Text)
+						go convert(page)
+					} else {
+						go convert(page)
+					}
 				}
+				text := WikiRegex.ReplaceAllLiteralString(page.Text, " ")
+				parts := strings.Split(text, " ")
+				for _, part := range parts {
+					part = strings.TrimSpace(part)
+					indexes := wordIndex[part]
+					indexes = append(indexes, count)
+					wordIndex[part] = indexes
+				}
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				alloc := float64(m.Alloc) / float64(1024*1024*1024)
+				fmt.Println(count, alloc)
 				count++
+				if alloc > 64 {
+					break LOOP
+				}
 			}
 		}
 		token, err = decoder.Token()
