@@ -1,0 +1,17 @@
+// Copyright 2021 The Wikipedia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+syntax = "proto3";
+package main;
+
+option go_package = ".;main";
+
+message Index {
+  repeated uint32 indexes = 1;
+}
+
+message Compressed {
+  uint64 size = 1;
+  bytes data = 2;
+}

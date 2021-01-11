@@ -16,10 +16,11 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/blevesearch/bleve"
+	//"github.com/blevesearch/bleve"
 	"github.com/blevesearch/bleve/analysis"
 	"github.com/blevesearch/bleve/analysis/char/html"
 	"github.com/blevesearch/bleve/registry"
+	"github.com/golang/protobuf/proto"
 )
 
 // Name is the name of the html filter
@@ -40,7 +41,7 @@ func AnalyzerConstructor(config map[string]interface{}, cache *registry.Cache) (
 }
 
 var (
-	// Convert to wiki to html
+	// ConvertFlag to wiki to html
 	ConvertFlag = flag.Bool("convert", false, "convert to wiki to html")
 	// Container is the container id
 	Container = flag.String("id", "", "the container id")
@@ -62,11 +63,11 @@ func main() {
 		registry.RegisterAnalyzer(Name, AnalyzerConstructor)
 	}
 
-	mapping := bleve.NewIndexMapping()
+	/*mapping := bleve.NewIndexMapping()
 	index, err := bleve.New("wiki.bleve", mapping)
 	if err != nil {
 		panic(err)
-	}
+	}*/
 
 	input, err := os.Open("enwiki-latest-pages-articles-multistream.xml.bz2")
 	if err != nil {
@@ -76,7 +77,7 @@ func main() {
 	reader := bzip2.NewReader(input)
 	decoder := xml.NewDecoder(reader)
 	token, err := decoder.Token()
-	done := make(chan Page, 8)
+	/*done := make(chan Page, 8)
 	convert := func(doc Page) {
 		text, err := Convert(doc.Text)
 		if err != nil {
@@ -84,8 +85,9 @@ func main() {
 		}
 		doc.Text = string(text)
 		done <- doc
-	}
-	wordIndex := make(map[string][]int)
+	}*/
+	wordIndex := make(map[string][]byte)
+	lru := NewLRU(15)
 	count := 0
 LOOP:
 	for err == nil {
@@ -94,7 +96,7 @@ LOOP:
 			if element.Name.Local == "page" {
 				var page Page
 				decoder.DecodeElement(&page, &element)
-				if *ConvertFlag {
+				/*if *ConvertFlag {
 					if count > 64 {
 						text := <-done
 						fmt.Println("---------------------")
@@ -104,21 +106,44 @@ LOOP:
 					} else {
 						go convert(page)
 					}
-				}
+				}*/
 				text := WikiRegex.ReplaceAllLiteralString(page.Text, " ")
 				parts := strings.Split(text, " ")
 				for _, part := range parts {
 					part = strings.TrimSpace(part)
-					indexes := wordIndex[part]
-					indexes = append(indexes, count)
-					wordIndex[part] = indexes
+					node, has := lru.Get(part)
+					if !has {
+						indexes := Index{}
+						err := proto.Unmarshal(wordIndex[part], &indexes)
+						if err != nil {
+							panic(err)
+						}
+						node.Index = indexes.Indexes
+					}
+					tail := len(node.Index) - 1
+					if tail >= 0 {
+						node.Index[tail] = uint32(count) - node.Index[tail]
+					}
+					node.Index = append(node.Index, uint32(count))
+				}
+				node := lru.Flush()
+				for node != nil {
+					indexes := Index{
+						Indexes: node.Index,
+					}
+					value, err := proto.Marshal(&indexes)
+					if err != nil {
+						panic(err)
+					}
+					wordIndex[node.Key] = value
+					node = node.B
 				}
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
 				alloc := float64(m.Alloc) / float64(1024*1024*1024)
 				fmt.Println(count, alloc)
 				count++
-				if alloc > 64 {
+				if alloc > 128 {
 					break LOOP
 				}
 			}
@@ -126,12 +151,12 @@ LOOP:
 		token, err = decoder.Token()
 	}
 
-	for i := 0; i < 64; i++ {
+	/*for i := 0; i < 64; i++ {
 		text := <-done
 		fmt.Println("---------------------")
 		fmt.Println(string(text.Text))
 		index.Index(text.Title, text.Text)
-	}
+	}*/
 }
 
 // Convert converts wikitext to html
