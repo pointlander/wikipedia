@@ -24,7 +24,7 @@ import (
 
 var (
 	// WikiRegex is a regex for wiki syntax
-	WikiRegex = regexp.MustCompile("[^A-Za-z.!?,;]+")
+	WikiRegex = regexp.MustCompile("[^A-Za-z]+")
 	// NumCPU is the number of CPUs
 	NumCPU = runtime.NumCPU()
 )
@@ -137,7 +137,10 @@ func main() {
 			parts := strings.Split(text, " ")
 			words := make(map[string]bool)
 			for _, part := range parts {
-				part = strings.TrimSpace(part)
+				part = strings.ToLower(strings.TrimSpace(part))
+				if len(part) == 0 {
+					continue
+				}
 				words[part] = true
 			}
 			results <- Result{
@@ -187,6 +190,9 @@ func main() {
 				if element.Name.Local == "page" {
 					var page Page
 					decoder.DecodeElement(&page, &element)
+					if len(page.Text) == 0 {
+						break
+					}
 					go process(page)
 					flight++
 					var m runtime.MemStats
@@ -223,6 +229,9 @@ func main() {
 
 					var page Page
 					decoder.DecodeElement(&page, &element)
+					if len(page.Text) == 0 {
+						break
+					}
 					go process(page)
 					flight++
 
