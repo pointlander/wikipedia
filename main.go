@@ -75,115 +75,112 @@ func main() {
 		Value []byte
 		Words map[string]bool
 	}
-	flush := func(node *Node, tx *bolt.Tx) error {
-		idx, err := tx.CreateBucketIfNotExists([]byte("index"))
-		if err != nil {
-			return err
-		}
-
-		for node != nil {
-			indexes := Index{
-				Indexes: node.Index,
-			}
-			value, err := proto.Marshal(&indexes)
-			if err != nil {
-				panic(err)
-			}
-			pressed := bytes.Buffer{}
-			Compress(value, &pressed)
-			compressed := Compressed{
-				Size: uint64(len(value)),
-				Data: pressed.Bytes(),
-			}
-			v, err := proto.Marshal(&compressed)
-			if err != nil {
-				panic(err)
-			}
-			key := []byte(node.Key)
-			if len(key) > bolt.MaxKeySize {
-				key = key[:bolt.MaxKeySize]
-			}
-			err = idx.Put(key, v)
+	flush := func(node *Node) error {
+		err := db.Update(func(tx *bolt.Tx) error {
+			idx, err := tx.CreateBucketIfNotExists([]byte("index"))
 			if err != nil {
 				return err
 			}
-			node = node.B
+
+			for node != nil {
+				indexes := Index{
+					Indexes: node.Index,
+				}
+				value, err := proto.Marshal(&indexes)
+				if err != nil {
+					panic(err)
+				}
+				pressed := bytes.Buffer{}
+				Compress(value, &pressed)
+				compressed := Compressed{
+					Size: uint64(len(value)),
+					Data: pressed.Bytes(),
+				}
+				v, err := proto.Marshal(&compressed)
+				if err != nil {
+					panic(err)
+				}
+				key := []byte(node.Key)
+				if len(key) > bolt.MaxKeySize {
+					key = key[:bolt.MaxKeySize]
+				}
+				err = idx.Put(key, v)
+				if err != nil {
+					return err
+				}
+				node = node.B
+			}
+			return nil
+		})
+		return err
+	}
+
+	results := make(chan Result, 8)
+	process := func(page Page) {
+		pressed := bytes.Buffer{}
+		compress.Mark1Compress16([]byte(page.Text), &pressed)
+		compressed := Compressed{
+			Size: uint64(len([]byte(page.Text))),
+			Data: pressed.Bytes(),
+		}
+		value, err := proto.Marshal(&compressed)
+		if err != nil {
+			panic(err)
+		}
+		text := WikiRegex.ReplaceAllLiteralString(page.Text, " ")
+		parts := strings.Split(text, " ")
+		words := make(map[string]bool)
+		for _, part := range parts {
+			part = strings.ToLower(strings.TrimSpace(part))
+			if len(part) == 0 {
+				continue
+			}
+			words[part] = true
+		}
+		results <- Result{
+			Title: page.Title,
+			Value: value,
+			Words: words,
+		}
+	}
+
+	write := func(wiki, idx *bolt.Bucket, result Result) error {
+		err := wiki.Put([]byte(result.Title), result.Value)
+		if err != nil {
+			return err
+		}
+		for part := range result.Words {
+			node, has := lru.Get(part)
+			if !has {
+				compressed := Compressed{}
+				value := idx.Get([]byte(part))
+				if len(value) > 0 {
+					err = proto.Unmarshal(value, &compressed)
+					if err != nil {
+						return err
+					}
+					pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
+					Decompress(pressed, output)
+					indexes := Index{}
+					err = proto.Unmarshal(output, &indexes)
+					if err != nil {
+						return err
+					}
+					node.Index = indexes.Indexes
+				}
+			}
+			tail := len(node.Index) - 1
+			if tail >= 0 {
+				node.Index[tail] = uint32(count) - node.Index[tail]
+			}
+			node.Index = append(node.Index, uint32(count))
 		}
 		return nil
 	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		wiki, err := tx.CreateBucketIfNotExists([]byte("wiki"))
-		if err != nil {
-			return err
-		}
-		idx, err := tx.CreateBucketIfNotExists([]byte("index"))
-		if err != nil {
-			return err
-		}
-		token, err := decoder.Token()
-		results := make(chan Result, 8)
-		process := func(page Page) {
-			pressed := bytes.Buffer{}
-			compress.Mark1Compress16([]byte(page.Text), &pressed)
-			compressed := Compressed{
-				Size: uint64(len([]byte(page.Text))),
-				Data: pressed.Bytes(),
-			}
-			value, err := proto.Marshal(&compressed)
-			if err != nil {
-				panic(err)
-			}
-			text := WikiRegex.ReplaceAllLiteralString(page.Text, " ")
-			parts := strings.Split(text, " ")
-			words := make(map[string]bool)
-			for _, part := range parts {
-				part = strings.ToLower(strings.TrimSpace(part))
-				if len(part) == 0 {
-					continue
-				}
-				words[part] = true
-			}
-			results <- Result{
-				Title: page.Title,
-				Value: value,
-				Words: words,
-			}
-		}
-		write := func(result Result) error {
-			err := wiki.Put([]byte(result.Title), result.Value)
-			if err != nil {
-				return err
-			}
-			for part := range result.Words {
-				node, has := lru.Get(part)
-				if !has {
-					compressed := Compressed{}
-					value := idx.Get([]byte(part))
-					if len(value) > 0 {
-						err = proto.Unmarshal(value, &compressed)
-						if err != nil {
-							return err
-						}
-						pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
-						Decompress(pressed, output)
-						indexes := Index{}
-						err = proto.Unmarshal(output, &indexes)
-						if err != nil {
-							return err
-						}
-						node.Index = indexes.Indexes
-					}
-				}
-				tail := len(node.Index) - 1
-				if tail >= 0 {
-					node.Index[tail] = uint32(count) - node.Index[tail]
-				}
-				node.Index = append(node.Index, uint32(count))
-			}
-			return nil
-		}
 
-		flight := 0
+	flight := 0
+	err = db.Update(func(tx *bolt.Tx) error {
+		token, err := decoder.Token()
 		for err == nil && count < NumCPU {
 			switch element := token.(type) {
 			case xml.StartElement:
@@ -207,75 +204,111 @@ func main() {
 			}
 			token, err = decoder.Token()
 		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
 
-		for err == nil {
-			switch element := token.(type) {
-			case xml.StartElement:
-				if element.Name.Local == "page" {
-					result := <-results
-					err := write(result)
-					if err != nil {
-						return err
-					}
-					flight--
-
-					node := lru.Flush()
-					if node != nil {
-						err := flush(node, tx)
-						if err != nil {
-							return err
-						}
-					}
-
-					var page Page
-					decoder.DecodeElement(&page, &element)
-					if len(page.Text) == 0 {
-						break
-					}
-					go process(page)
-					flight++
-
-					var m runtime.MemStats
-					runtime.ReadMemStats(&m)
-					alloc := float64(m.Alloc) / float64(1024*1024*1024)
-					fmt.Println(count, alloc)
-					count++
-					if alloc > 127 {
-						return nil
-					}
-				}
+	done := false
+	for !done {
+		var node *Node
+		err = db.Update(func(tx *bolt.Tx) error {
+			wiki, err := tx.CreateBucketIfNotExists([]byte("wiki"))
+			if err != nil {
+				return err
 			}
-			token, err = decoder.Token()
-		}
-
-		for i := 0; i < flight; i++ {
-			result := <-results
-			err := write(result)
+			idx, err := tx.CreateBucketIfNotExists([]byte("index"))
 			if err != nil {
 				return err
 			}
 
-			node := lru.Flush()
-			if node != nil {
-				err := flush(node, tx)
-				if err != nil {
-					return err
+			token, err := decoder.Token()
+			for err == nil {
+				switch element := token.(type) {
+				case xml.StartElement:
+					if element.Name.Local == "page" {
+						if flight > 0 {
+							result := <-results
+							err := write(wiki, idx, result)
+							if err != nil {
+								return err
+							}
+							flight--
+						}
+
+						node = lru.Flush()
+						if node != nil {
+							return nil
+						}
+
+						var page Page
+						decoder.DecodeElement(&page, &element)
+						if len(page.Text) == 0 {
+							break
+						}
+						go process(page)
+						flight++
+
+						var m runtime.MemStats
+						runtime.ReadMemStats(&m)
+						alloc := float64(m.Alloc) / float64(1024*1024*1024)
+						fmt.Println(count, alloc)
+						count++
+						if alloc > 127 {
+							return nil
+						}
+					}
 				}
+				token, err = decoder.Token()
+			}
+			done = true
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		if node != nil {
+			err := flush(node)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		wiki, err := tx.CreateBucketIfNotExists([]byte("wiki"))
+		if err != nil {
+			return err
+		}
+		idx, err := tx.CreateBucketIfNotExists([]byte("index"))
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < flight; i++ {
+			result := <-results
+			err := write(wiki, idx, result)
+			if err != nil {
+				return err
 			}
 
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 			alloc := float64(m.Alloc) / float64(1024*1024*1024)
-			fmt.Println(count, alloc)
-			count++
+			fmt.Println(alloc)
 			if alloc > 127 {
 				return nil
 			}
 		}
-
 		return nil
 	})
+	if err != nil {
+		panic(err)
+	}
 
+	err = flush(lru.Head)
 	if err != nil {
 		panic(err)
 	}
