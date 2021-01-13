@@ -54,6 +54,7 @@ func Decompress(input io.Reader, output []byte) {
 }
 
 // 8526625 63.518098555505276
+// 20851615 17.542188420891762
 func main() {
 	flag.Parse()
 
@@ -62,7 +63,7 @@ func main() {
 		panic(err)
 	}
 
-	input, err := os.Open("enwiki-latest-pages-articles-multistream.xml.bz2")
+	input, err := os.Open("enwiki-latest-pages-articles.xml.bz2")
 	if err != nil {
 		panic(err)
 	}
