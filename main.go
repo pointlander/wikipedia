@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"compress/bzip2"
+	"encoding/binary"
 	"encoding/xml"
 	"flag"
 	"fmt"
@@ -69,7 +70,6 @@ func main() {
 	reader := bzip2.NewReader(input)
 	decoder := xml.NewDecoder(reader)
 	lru := NewLRU(20)
-	count := 0
 	type Result struct {
 		Title string
 		Value []byte
@@ -144,8 +144,22 @@ func main() {
 		}
 	}
 
-	write := func(wiki, idx *bolt.Bucket, result Result) error {
-		err := wiki.Put([]byte(result.Title), result.Value)
+	write := func(wiki, pages, idx *bolt.Bucket, result Result) error {
+		index, err := wiki.NextSequence()
+		if err != nil {
+			return err
+		}
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		alloc := float64(m.Alloc) / float64(1024*1024*1024)
+		fmt.Println(index, alloc)
+		value := make([]byte, 4)
+		binary.LittleEndian.PutUint32(value, uint32(index))
+		err = wiki.Put([]byte(result.Title), value)
+		if err != nil {
+			return err
+		}
+		err = wiki.Put(value, result.Value)
 		if err != nil {
 			return err
 		}
@@ -171,9 +185,9 @@ func main() {
 			}
 			tail := len(node.Index) - 1
 			if tail >= 0 {
-				node.Index[tail] = uint32(count) - node.Index[tail]
+				node.Index[tail] = uint32(index) - node.Index[tail]
 			}
-			node.Index = append(node.Index, uint32(count))
+			node.Index = append(node.Index, uint32(index))
 		}
 		return nil
 	}
@@ -181,7 +195,7 @@ func main() {
 	flight := 0
 	err = db.Update(func(tx *bolt.Tx) error {
 		token, err := decoder.Token()
-		for err == nil && count < NumCPU {
+		for err == nil && flight < NumCPU {
 			switch element := token.(type) {
 			case xml.StartElement:
 				if element.Name.Local == "page" {
@@ -195,8 +209,6 @@ func main() {
 					var m runtime.MemStats
 					runtime.ReadMemStats(&m)
 					alloc := float64(m.Alloc) / float64(1024*1024*1024)
-					fmt.Println(count, alloc)
-					count++
 					if alloc > 127 {
 						return nil
 					}
@@ -218,6 +230,10 @@ func main() {
 			if err != nil {
 				return err
 			}
+			pages, err := tx.CreateBucketIfNotExists([]byte("pages"))
+			if err != nil {
+				return err
+			}
 			idx, err := tx.CreateBucketIfNotExists([]byte("index"))
 			if err != nil {
 				return err
@@ -230,7 +246,7 @@ func main() {
 					if element.Name.Local == "page" {
 						if flight > 0 {
 							result := <-results
-							err := write(wiki, idx, result)
+							err := write(wiki, pages, idx, result)
 							if err != nil {
 								return err
 							}
@@ -253,8 +269,6 @@ func main() {
 						var m runtime.MemStats
 						runtime.ReadMemStats(&m)
 						alloc := float64(m.Alloc) / float64(1024*1024*1024)
-						fmt.Println(count, alloc)
-						count++
 						if alloc > 127 {
 							return nil
 						}
@@ -282,6 +296,10 @@ func main() {
 		if err != nil {
 			return err
 		}
+		pages, err := tx.CreateBucketIfNotExists([]byte("pages"))
+		if err != nil {
+			return err
+		}
 		idx, err := tx.CreateBucketIfNotExists([]byte("index"))
 		if err != nil {
 			return err
@@ -289,7 +307,7 @@ func main() {
 
 		for i := 0; i < flight; i++ {
 			result := <-results
-			err := write(wiki, idx, result)
+			err := write(wiki, pages, idx, result)
 			if err != nil {
 				return err
 			}
@@ -297,7 +315,6 @@ func main() {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 			alloc := float64(m.Alloc) / float64(1024*1024*1024)
-			fmt.Println(alloc)
 			if alloc > 127 {
 				return nil
 			}
