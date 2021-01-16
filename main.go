@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pointlander/compress"
+	"github.com/pointlander/pagerank"
 
 	"github.com/boltdb/bolt"
 	"github.com/golang/protobuf/proto"
@@ -31,6 +33,8 @@ var (
 	NumCPU = runtime.NumCPU()
 	// BuildFlag selects build mode
 	BuildFlag = flag.Bool("build", false, "build the db")
+	// RankFlag ranks the pages
+	RankFlag = flag.Bool("rank", false, "build the db")
 	// LookupFlag selects looking up an entry
 	LookupFlag = flag.String("lookup", "", "look up an entry")
 	// SearchFlag searches for the text
@@ -65,6 +69,94 @@ func main() {
 
 	if *BuildFlag {
 		Build()
+		return
+	} else if *RankFlag {
+		graph := pagerank.NewGraph32(1024)
+		db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
+		if err != nil {
+			panic(err)
+		}
+		err = db.View(func(tx *bolt.Tx) error {
+			wiki := tx.Bucket([]byte("wiki"))
+			pages := tx.Bucket([]byte("pages"))
+			cursor := pages.Cursor()
+			key, value := cursor.First()
+			i := 0
+			for key != nil && value != nil {
+				compressed := Compressed{}
+				err = proto.Unmarshal(value, &compressed)
+				if err != nil {
+					return err
+				}
+				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
+				compress.Mark1Decompress16(pressed, output)
+				parser := &Wikipedia{Buffer: string(output)}
+				parser.Init()
+				if err := parser.Parse(); err != nil {
+					panic(err)
+				}
+				element := func(node *node32) string {
+					node = node.up
+					for node != nil {
+						switch node.pegRule {
+						case rulelink:
+							return string(parser.buffer[node.begin:node.end])
+						}
+						node = node.next
+					}
+					return ""
+				}
+				ast, links := parser.AST(), make([]string, 0, 8)
+				node := ast.up
+				for node != nil {
+					switch node.pegRule {
+					case ruleelement:
+						link := element(node)
+						if link != "" {
+							links = append(links, link)
+						}
+					}
+					node = node.next
+				}
+				source := binary.LittleEndian.Uint32(key)
+				for _, link := range links {
+					value := wiki.Get([]byte(link))
+					if len(value) > 0 {
+						target := binary.LittleEndian.Uint32(value)
+						graph.Link(uint64(source), uint64(target), 1.0)
+					}
+				}
+
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				alloc := float64(m.Alloc) / float64(1024*1024*1024)
+				fmt.Println(i, alloc)
+				key, value = cursor.Next()
+				i++
+			}
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		err = db.Update(func(tx *bolt.Tx) error {
+			tx.DeleteBucket([]byte("ranks"))
+			ranks, err := tx.CreateBucketIfNotExists([]byte("ranks"))
+			if err != nil {
+				return err
+			}
+			key, value := make([]byte, 4), make([]byte, 4)
+			graph.Rank(.85, 0.000001, func(node uint64, rank float32) {
+				binary.LittleEndian.PutUint32(key, uint32(node))
+				binary.LittleEndian.PutUint32(value, math.Float32bits(rank))
+				ranks.Put(key, value)
+			})
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
 		return
 	} else if *LookupFlag != "" {
 		db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
@@ -164,6 +256,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		return
 	}
 }
 
