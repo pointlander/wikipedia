@@ -15,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/pointlander/compress"
@@ -32,6 +33,8 @@ var (
 	BuildFlag = flag.Bool("build", false, "build the db")
 	// LookupFlag selects looking up an entry
 	LookupFlag = flag.String("lookup", "", "look up an entry")
+	// SearchFlag searches for the text
+	SearchFlag = flag.String("search", "", "searches for the text")
 )
 
 // Page is a wikitext page
@@ -88,12 +91,84 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		return
+	} else if *SearchFlag != "" {
+		db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
+		if err != nil {
+			panic(err)
+		}
+		err = db.View(func(tx *bolt.Tx) error {
+			pagesBucket := tx.Bucket([]byte("pages"))
+			indexBucket := tx.Bucket([]byte("index"))
+			indexes := make(map[uint32]int)
+			parts := strings.Split(*SearchFlag, " ")
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				value := indexBucket.Get([]byte(part))
+				if len(value) > 0 {
+					compressed := Compressed{}
+					err = proto.Unmarshal(value, &compressed)
+					if err != nil {
+						return err
+					}
+					pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
+					Decompress(pressed, output)
+					values := Index{}
+					err = proto.Unmarshal(output, &values)
+					if err != nil {
+						return err
+					}
+					index := values.Indexes[len(values.Indexes)-1]
+					indexes[index]++
+					for i := len(values.Indexes) - 2; i >= 0; i-- {
+						index -= values.Indexes[i]
+						indexes[index]++
+					}
+				}
+			}
+
+			type Result struct {
+				Index uint32
+				Count int
+			}
+			results := make([]Result, 0, 8)
+			for index, count := range indexes {
+				results = append(results, Result{
+					Index: index,
+					Count: count,
+				})
+			}
+			sort.Slice(results, func(i, j int) bool {
+				return results[j].Count < results[i].Count
+			})
+			fmt.Println(len(results))
+			for _, result := range results {
+				index := make([]byte, 4)
+				binary.LittleEndian.PutUint32(index, uint32(result.Index))
+				value := pagesBucket.Get(index)
+				compressed := Compressed{}
+				err = proto.Unmarshal(value, &compressed)
+				if err != nil {
+					return err
+				}
+				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
+				compress.Mark1Decompress16(pressed, output)
+				fmt.Println(result.Index, result.Count)
+				fmt.Println(string(output))
+				fmt.Printf("\n")
+				fmt.Printf("------------------------------------------------------\n")
+				fmt.Printf("\n")
+			}
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
 // Build builds the db
 func Build() {
-
 	db, err := bolt.Open("wikipedia.db", 0600, nil)
 	if err != nil {
 		panic(err)
