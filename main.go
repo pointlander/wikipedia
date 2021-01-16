@@ -28,6 +28,10 @@ var (
 	WikiRegex = regexp.MustCompile("[^A-Za-z]+")
 	// NumCPU is the number of CPUs
 	NumCPU = runtime.NumCPU()
+	// BuildFlag selects build mode
+	BuildFlag = flag.Bool("build", false, "build the db")
+	// LookupFlag selects looking up an entry
+	LookupFlag = flag.String("lookup", "", "look up an entry")
 )
 
 // Page is a wikitext page
@@ -53,10 +57,42 @@ func Decompress(input io.Reader, output []byte) {
 	compress.BijectiveBurrowsWheelerDecoder(channel).MoveToFrontDecoder().FilteredAdaptiveBitDecoder().Decode(input)
 }
 
-// 8526625 63.518098555505276
-// 20851615 17.542188420891762
 func main() {
 	flag.Parse()
+
+	if *BuildFlag {
+		Build()
+		return
+	} else if *LookupFlag != "" {
+		db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
+		if err != nil {
+			panic(err)
+		}
+		err = db.View(func(tx *bolt.Tx) error {
+			wiki := tx.Bucket([]byte("wiki"))
+			pages := tx.Bucket([]byte("pages"))
+			value := wiki.Get([]byte(*LookupFlag))
+			if value != nil {
+				value := pages.Get(value)
+				compressed := Compressed{}
+				err = proto.Unmarshal(value, &compressed)
+				if err != nil {
+					return err
+				}
+				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
+				compress.Mark1Decompress16(pressed, output)
+				fmt.Println(string(output))
+			}
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+// Build builds the db
+func Build() {
 
 	db, err := bolt.Open("wikipedia.db", 0600, nil)
 	if err != nil {
@@ -160,7 +196,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		err = wiki.Put(value, result.Value)
+		err = pages.Put(value, result.Value)
 		if err != nil {
 			return err
 		}
