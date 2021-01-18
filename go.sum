@@ -101,6 +101,8 @@ github.com/pointlander/pagerank v0.0.0-20200407052526-f688f620f662 h1:QXmMptedBL
 github.com/pointlander/pagerank v0.0.0-20200407052526-f688f620f662/go.mod h1:OjGf5Z5lF/orWk5DWkRMuoZTVqkPkDXFLnQBEoZPPYg=
 github.com/pointlander/pagerank v0.0.0-20210118140604-908ab4631fbb h1:v10WalqZUkSdAvbz/DwM84s1t0itQE3Hh1uUQihAydg=
 github.com/pointlander/pagerank v0.0.0-20210118140604-908ab4631fbb/go.mod h1:9UawvzpkRT8gwNLM8E8JdGnn6p1kHqEdV+P8TlDZibk=
+github.com/pointlander/pagerank v0.0.0-20210118145028-e3beb2a10f3d h1:x5rTjYXRyiGVoouDAkqWWTaJ9poGufKHOGxc6Rrb16I=
+github.com/pointlander/pagerank v0.0.0-20210118145028-e3beb2a10f3d/go.mod h1:9UawvzpkRT8gwNLM8E8JdGnn6p1kHqEdV+P8TlDZibk=
 github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:xMI15A0UPsDsEKsMN9yxemIoYk6Tm2C1GtYGdfGttqA=
 github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=

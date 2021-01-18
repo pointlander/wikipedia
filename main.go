@@ -82,13 +82,13 @@ func main() {
 			pages := tx.Bucket([]byte("pages"))
 			cursor := pages.Cursor()
 			key, value := cursor.First()
-			i := 0
-			for key != nil && value != nil {
-				compressed := Compressed{}
-				err = proto.Unmarshal(value, &compressed)
-				if err != nil {
-					return err
-				}
+			i, flight := 0, 0
+			type Result struct {
+				Source uint32
+				Links  []uint32
+			}
+			done := make(chan Result, 8)
+			process := func(key uint32, compressed *Compressed) {
 				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 				compress.Mark1Decompress16(pressed, output)
 				parser := &Wikipedia{Buffer: string(output)}
@@ -107,27 +107,36 @@ func main() {
 					}
 					return ""
 				}
-				ast, links := parser.AST(), make([]string, 0, 8)
+				ast, links := parser.AST(), make([]uint32, 0, 8)
 				node := ast.up
 				for node != nil {
 					switch node.pegRule {
 					case ruleelement:
 						link := element(node)
 						if link != "" {
-							links = append(links, link)
+							link = strings.TrimSpace(link)
+							value := wiki.Get([]byte(link))
+							if len(value) > 0 {
+								target := binary.LittleEndian.Uint32(value)
+								links = append(links, target)
+							}
 						}
 					}
 					node = node.next
 				}
-				source := binary.LittleEndian.Uint32(key)
-				for _, link := range links {
-					link = strings.TrimSpace(link)
-					value := wiki.Get([]byte(link))
-					if len(value) > 0 {
-						target := binary.LittleEndian.Uint32(value)
-						graph.Link(uint64(source), uint64(target), 1.0)
-					}
+				done <- Result{
+					Source: key,
+					Links:  links,
 				}
+			}
+			for key != nil && value != nil && flight < NumCPU {
+				compressed := &Compressed{}
+				err = proto.Unmarshal(value, compressed)
+				if err != nil {
+					return err
+				}
+				go process(binary.LittleEndian.Uint32(key), compressed)
+				flight++
 
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
@@ -136,28 +145,85 @@ func main() {
 				key, value = cursor.Next()
 				i++
 			}
+
+			for key != nil && value != nil {
+				result := <-done
+				flight--
+				for _, link := range result.Links {
+					graph.Link(uint64(result.Source), uint64(link), 1.0)
+				}
+
+				compressed := &Compressed{}
+				err = proto.Unmarshal(value, compressed)
+				if err != nil {
+					return err
+				}
+				go process(binary.LittleEndian.Uint32(key), compressed)
+				flight++
+
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				alloc := float64(m.Alloc) / float64(1024*1024*1024)
+				fmt.Println(i, alloc)
+				key, value = cursor.Next()
+				i++
+			}
+
+			for j := 0; j < flight; j++ {
+				result := <-done
+				for _, link := range result.Links {
+					graph.Link(uint64(result.Source), uint64(link), 1.0)
+				}
+			}
 			return nil
 		})
 		if err != nil {
 			panic(err)
 		}
 
+		type Rank struct {
+			Node uint32
+			Rank float32
+		}
+		ranks := make([]Rank, 0, 8)
+		graph.Rank(.85, .01, func(node uint64, rank float32) {
+			ranks = append(ranks, Rank{
+				Node: uint32(node),
+				Rank: rank,
+			})
+		})
+
 		err = db.Update(func(tx *bolt.Tx) error {
 			tx.DeleteBucket([]byte("ranks"))
-			ranks, err := tx.CreateBucketIfNotExists([]byte("ranks"))
+			_, err := tx.CreateBucketIfNotExists([]byte("ranks"))
 			if err != nil {
 				return err
 			}
-			key, value := make([]byte, 4), make([]byte, 4)
-			graph.Rank(.85, .01, func(node uint64, rank float32) {
-				binary.LittleEndian.PutUint32(key, uint32(node))
-				binary.LittleEndian.PutUint32(value, math.Float32bits(rank))
-				ranks.Put(key, value)
-			})
 			return nil
 		})
 		if err != nil {
 			panic(err)
+		}
+
+		for i := 0; i < len(ranks); i += 1024 {
+			fmt.Println(float64(i) / float64(len(ranks)))
+			err := db.Update(func(tx *bolt.Tx) error {
+				ranksBucket := tx.Bucket([]byte("ranks"))
+				end := i + 1024
+				if end > len(ranks) {
+					end = len(ranks)
+				}
+				for _, rank := range ranks[i:end] {
+					key, value := make([]byte, 4), make([]byte, 4)
+					binary.LittleEndian.PutUint32(key, uint32(rank.Node))
+					binary.LittleEndian.PutUint32(value, math.Float32bits(rank.Rank))
+					ranksBucket.Put(key, value)
+				}
+				return nil
+			})
+			if err != nil {
+				panic(err)
+			}
 		}
 		return
 	} else if *LookupFlag != "" {
