@@ -72,7 +72,8 @@ func main() {
 		return
 	} else if *RankFlag {
 		graph := pagerank.NewGraph32(1024)
-		db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
+		graph.Verbose = true
+		db, err := bolt.Open("wikipedia.db", 0600, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -120,6 +121,7 @@ func main() {
 				}
 				source := binary.LittleEndian.Uint32(key)
 				for _, link := range links {
+					link = strings.TrimSpace(link)
 					value := wiki.Get([]byte(link))
 					if len(value) > 0 {
 						target := binary.LittleEndian.Uint32(value)
@@ -147,7 +149,7 @@ func main() {
 				return err
 			}
 			key, value := make([]byte, 4), make([]byte, 4)
-			graph.Rank(.85, 0.000001, func(node uint64, rank float32) {
+			graph.Rank(.85, .01, func(node uint64, rank float32) {
 				binary.LittleEndian.PutUint32(key, uint32(node))
 				binary.LittleEndian.PutUint32(value, math.Float32bits(rank))
 				ranks.Put(key, value)
