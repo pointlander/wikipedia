@@ -44,6 +44,7 @@ var (
 // Page is a wikitext page
 type Page struct {
 	Title string `xml:"title"`
+	ID    uint64 `xml:"id"`
 	Text  string `xml:"revision>text"`
 }
 
@@ -91,7 +92,12 @@ func main() {
 			process := func(key uint32, compressed *Compressed) {
 				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 				compress.Mark1Decompress16(pressed, output)
-				parser := &Wikipedia{Buffer: string(output)}
+				article := Article{}
+				err := proto.Unmarshal(output, &article)
+				if err != nil {
+					panic(err)
+				}
+				parser := &Wikipedia{Buffer: article.Text}
 				parser.Init()
 				if err := parser.Parse(); err != nil {
 					panic(err)
@@ -244,7 +250,13 @@ func main() {
 				}
 				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 				compress.Mark1Decompress16(pressed, output)
-				fmt.Println(string(output))
+				article := Article{}
+				err := proto.Unmarshal(output, &article)
+				if err != nil {
+					return err
+				}
+				fmt.Println(article.Title)
+				fmt.Println(article.Text)
 			}
 			return nil
 		})
@@ -260,10 +272,11 @@ func main() {
 		err = db.View(func(tx *bolt.Tx) error {
 			pagesBucket := tx.Bucket([]byte("pages"))
 			indexBucket := tx.Bucket([]byte("index"))
+			ranksBucket := tx.Bucket([]byte("ranks"))
 			indexes := make(map[uint32]int)
 			parts := strings.Split(*SearchFlag, " ")
 			for _, part := range parts {
-				part = strings.TrimSpace(part)
+				part = strings.ToLower(strings.TrimSpace(part))
 				value := indexBucket.Get([]byte(part))
 				if len(value) > 0 {
 					compressed := Compressed{}
@@ -290,16 +303,30 @@ func main() {
 			type Result struct {
 				Index uint32
 				Count int
+				Rank  float32
 			}
 			results := make([]Result, 0, 8)
 			for index, count := range indexes {
+				value := make([]byte, 4)
+				binary.LittleEndian.PutUint32(value, uint32(index))
+				rank := ranksBucket.Get(value)
+				var r float32
+				if len(rank) > 0 {
+					r = math.Float32frombits(binary.LittleEndian.Uint32(rank))
+				}
 				results = append(results, Result{
 					Index: index,
 					Count: count,
+					Rank:  r,
 				})
 			}
 			sort.Slice(results, func(i, j int) bool {
-				return results[j].Count < results[i].Count
+				if results[j].Count < results[i].Count {
+					return true
+				} else if results[j].Count == results[i].Count {
+					return results[j].Rank < results[i].Rank
+				}
+				return false
 			})
 			fmt.Println(len(results))
 			for _, result := range results {
@@ -313,11 +340,13 @@ func main() {
 				}
 				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 				compress.Mark1Decompress16(pressed, output)
-				fmt.Println(result.Index, result.Count)
-				fmt.Println(string(output))
-				fmt.Printf("\n")
-				fmt.Printf("------------------------------------------------------\n")
-				fmt.Printf("\n")
+				article := Article{}
+				err := proto.Unmarshal(output, &article)
+				if err != nil {
+					return err
+				}
+				fmt.Println(result.Rank, result.Index, result.Count)
+				fmt.Println(article.Title)
 			}
 			return nil
 		})
@@ -390,10 +419,19 @@ func Build() {
 
 	results := make(chan Result, 8)
 	process := func(page Page) {
+		article := Article{
+			Title: page.Title,
+			ID:    page.ID,
+			Text:  page.Text,
+		}
+		encoded, err := proto.Marshal(&article)
+		if err != nil {
+			panic(err)
+		}
 		pressed := bytes.Buffer{}
-		compress.Mark1Compress16([]byte(page.Text), &pressed)
+		compress.Mark1Compress16(encoded, &pressed)
 		compressed := Compressed{
-			Size: uint64(len([]byte(page.Text))),
+			Size: uint64(len(encoded)),
 			Data: pressed.Bytes(),
 		}
 		value, err := proto.Marshal(&compressed)

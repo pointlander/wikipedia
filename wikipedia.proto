@@ -11,6 +11,12 @@ message Index {
   repeated uint32 indexes = 1;
 }
 
+message Article {
+  string Title = 1;
+  uint64 ID = 2;
+  string Text = 3;
+}
+
 message Compressed {
   uint64 size = 1;
   bytes data = 2;
