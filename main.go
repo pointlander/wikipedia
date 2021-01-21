@@ -192,7 +192,7 @@ func main() {
 			Rank float32
 		}
 		ranks := make([]Rank, 0, 8)
-		graph.Rank(.85, .01, func(node uint64, rank float32) {
+		graph.Rank(.85, .00001, func(node uint64, rank float32) {
 			ranks = append(ranks, Rank{
 				Node: uint32(node),
 				Rank: rank,
@@ -269,12 +269,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		parts := strings.Split(*SearchFlag, " ")
 		err = db.View(func(tx *bolt.Tx) error {
 			pagesBucket := tx.Bucket([]byte("pages"))
 			indexBucket := tx.Bucket([]byte("index"))
 			ranksBucket := tx.Bucket([]byte("ranks"))
 			indexes := make(map[uint32]int)
-			parts := strings.Split(*SearchFlag, " ")
 			for _, part := range parts {
 				part = strings.ToLower(strings.TrimSpace(part))
 				value := indexBucket.Get([]byte(part))
@@ -301,9 +301,11 @@ func main() {
 			}
 
 			type Result struct {
-				Index uint32
-				Count int
-				Rank  float32
+				Index   uint32
+				Count   int
+				Rank    float32
+				Article *Article
+				Matches int
 			}
 			results := make([]Result, 0, 8)
 			for index, count := range indexes {
@@ -320,16 +322,7 @@ func main() {
 					Rank:  r,
 				})
 			}
-			sort.Slice(results, func(i, j int) bool {
-				if results[j].Count < results[i].Count {
-					return true
-				} else if results[j].Count == results[i].Count {
-					return results[j].Rank < results[i].Rank
-				}
-				return false
-			})
-			fmt.Println(len(results))
-			for _, result := range results {
+			for i, result := range results {
 				index := make([]byte, 4)
 				binary.LittleEndian.PutUint32(index, uint32(result.Index))
 				value := pagesBucket.Get(index)
@@ -340,13 +333,31 @@ func main() {
 				}
 				pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 				compress.Mark1Decompress16(pressed, output)
-				article := Article{}
-				err := proto.Unmarshal(output, &article)
+				article := &Article{}
+				err := proto.Unmarshal(output, article)
 				if err != nil {
 					return err
 				}
-				fmt.Println(result.Rank, result.Index, result.Count)
-				fmt.Println(article.Title)
+				results[i].Article = article
+				for _, part := range parts {
+					part = strings.ToLower(strings.TrimSpace(part))
+					exp := regexp.MustCompile(part)
+					matches := exp.FindAllStringIndex(strings.ToLower(article.Text), -1)
+					results[i].Matches += len(matches)
+				}
+			}
+			sort.Slice(results, func(i, j int) bool {
+				if results[j].Count < results[i].Count {
+					return true
+				} else if results[j].Count == results[i].Count {
+					return results[j].Rank*float32(results[j].Matches) < results[i].Rank*float32(results[i].Matches)
+				}
+				return false
+			})
+			fmt.Println("results=", len(results))
+			for _, result := range results {
+				fmt.Println(result.Rank, result.Count)
+				fmt.Println(result.Article.Title)
 			}
 			return nil
 		})
