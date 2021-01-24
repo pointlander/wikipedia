@@ -3,9 +3,9 @@
 // license that can be found in the LICENSE file.
 
 syntax = "proto3";
-package main;
+package wikipedia;
 
-option go_package = ".;main";
+option go_package = ".;wikipedia";
 
 message Index {
   repeated uint32 indexes = 1;
