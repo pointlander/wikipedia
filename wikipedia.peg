@@ -8,7 +8,38 @@ type Wikipedia Peg {
 }
 
 wiki <- element*
-element <- '[[' link ('|' text)? ']]'
-         / .
+element <- heading6
+         / heading5
+         / heading4
+         / heading3
+         / heading2
+         / heading1
+         / hr
+         / br
+         / ulist1
+         / olist1
+         / '[[' link ('|' text)? ']]'
+         / wild
 link <- (!('|' / ']]') .)*
 text <- (!('|' / ']]') .)*
+heading1 <- '=' <(!'=' .)+> '=' end
+heading2 <- '==' <(!'==' .)+> '==' end
+heading3 <- '===' <(!'===' .)+> '===' end
+heading4 <- '====' <(!'====' .)+> '====' end
+heading5 <- '=====' <(!'=====' .)+> '=====' end
+heading6 <- '======' <(!'======' .)+> '======' end
+hr <- '----'  end
+br <- end end
+list_content <- '[[' link ('|' text)? ']]'
+              / .
+ulist1 <- '* ' (list_content !end)* end ulist2*
+ulist2 <- '** ' (list_content !end)* end ulist3*
+ulist3 <- '*** ' (list_content !end)* end ulist4*
+ulist4 <- '**** ' (list_content !end)* end
+olist1 <- '# ' (list_content !end)* end olist2*
+olist2 <- '## ' (list_content !end)* end olist3*
+olist3 <- '### ' (list_content !end)* end olist4*
+olist4 <- '### ' (list_content !end)* end
+end <- '\n'
+     / '\r\n'
+wild <- .
