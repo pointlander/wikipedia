@@ -514,6 +514,62 @@ func Rank() {
 	}
 }
 
+// HTML returns the HTML version of the article
+func (a *Article) HTML() string {
+	parser := &Wikipedia{Buffer: a.Text}
+	parser.Init()
+	if err := parser.Parse(); err != nil {
+		panic(err)
+	}
+	text := ""
+	element := func(node *node32) {
+		node = node.up
+		for node != nil {
+			switch node.pegRule {
+			case ruleheading6:
+				text += fmt.Sprintf("<h6>%s</h6>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case ruleheading5:
+				text += fmt.Sprintf("<h5>%s</h5>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case ruleheading4:
+				text += fmt.Sprintf("<h4>%s</h4>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case ruleheading3:
+				text += fmt.Sprintf("<h3>%s</h3>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case ruleheading2:
+				text += fmt.Sprintf("<h2>%s</h2>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case ruleheading1:
+				text += fmt.Sprintf("<h1>%s</h1>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
+			case rulehr:
+				text += fmt.Sprintf("<hr/>\n")
+			case rulebr:
+				text += fmt.Sprintf("<br/>\n\n")
+			case rulelink:
+				link := string(parser.buffer[node.begin:node.end])
+				if node.next != nil && node.next.pegRule == ruletext {
+					node = node.next
+					linkText := string(parser.buffer[node.begin:node.end])
+					text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), linkText)
+				} else {
+					text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), link)
+				}
+				return
+			case rulewild:
+				text += string(parser.buffer[node.begin:node.end])
+			}
+			node = node.next
+		}
+	}
+	ast := parser.AST()
+	node := ast.up
+	for node != nil {
+		switch node.pegRule {
+		case ruleelement:
+			element(node)
+		}
+		node = node.next
+	}
+	return text
+}
+
 // Lookup looks up an article
 func Lookup(title string) (article *Article) {
 	db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
@@ -538,58 +594,6 @@ func Lookup(title string) (article *Article) {
 			if err != nil {
 				return err
 			}
-			parser := &Wikipedia{Buffer: a.Text}
-			parser.Init()
-			if err := parser.Parse(); err != nil {
-				panic(err)
-			}
-			text := ""
-			element := func(node *node32) {
-				node = node.up
-				for node != nil {
-					switch node.pegRule {
-					case ruleheading6:
-						text += fmt.Sprintf("<h6>%s</h6>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case ruleheading5:
-						text += fmt.Sprintf("<h5>%s</h5>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case ruleheading4:
-						text += fmt.Sprintf("<h4>%s</h4>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case ruleheading3:
-						text += fmt.Sprintf("<h3>%s</h3>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case ruleheading2:
-						text += fmt.Sprintf("<h2>%s</h2>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case ruleheading1:
-						text += fmt.Sprintf("<h1>%s</h1>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
-					case rulehr:
-						text += fmt.Sprintf("<hr/>\n")
-					case rulebr:
-						text += fmt.Sprintf("<br/>\n\n")
-					case rulelink:
-						link := string(parser.buffer[node.begin:node.end])
-						if node.next != nil && node.next.pegRule == ruletext {
-							node = node.next
-							linkText := string(parser.buffer[node.begin:node.end])
-							text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), linkText)
-						} else {
-							text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), link)
-						}
-						return
-					case rulewild:
-						text += string(parser.buffer[node.begin:node.end])
-					}
-					node = node.next
-				}
-			}
-			ast := parser.AST()
-			node := ast.up
-			for node != nil {
-				switch node.pegRule {
-				case ruleelement:
-					element(node)
-				}
-				node = node.next
-			}
-			a.Text = text
 			article = &a
 		}
 		return nil

@@ -35,7 +35,7 @@ func main() {
 		article := wikipedia.Lookup(*LookupFlag)
 		if article != nil {
 			fmt.Println(article.Title)
-			fmt.Println(article.Text)
+			fmt.Println(article.HTML())
 		}
 		return
 	} else if *SearchFlag != "" {
