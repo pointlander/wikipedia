@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/xml"
 	"fmt"
+	"html/template"
 	"io"
 	"math"
 	"net/url"
@@ -66,12 +67,31 @@ func Decompress(input io.Reader, output []byte) {
 	compress.BijectiveBurrowsWheelerDecoder(channel).MoveToFrontDecoder().FilteredAdaptiveBitDecoder().Decode(input)
 }
 
+// Encyclopedia is an encyclopedia
+type Encyclopedia struct {
+	DB              *bolt.DB
+	entryTemplate   *template.Template
+	resultsTemplate *template.Template
+}
+
+// Open opens an encyclopedia
+func Open(readonly bool) (*Encyclopedia, error) {
+	db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: readonly})
+	if err != nil {
+		return nil, err
+	}
+	return &Encyclopedia{
+		DB: db,
+	}, nil
+}
+
 // Build builds the db
 func Build() {
-	db, err := bolt.Open("wikipedia.db", 0600, nil)
+	encyclopedia, err := Open(false)
 	if err != nil {
 		panic(err)
 	}
+	db := encyclopedia.DB
 
 	input, err := os.Open("enwiki-latest-pages-articles.xml.bz2")
 	if err != nil {
@@ -355,10 +375,11 @@ func Build() {
 func Rank() {
 	graph := pagerank.NewGraph32(1024)
 	graph.Verbose = true
-	db, err := bolt.Open("wikipedia.db", 0600, nil)
+	encyclopedia, err := Open(false)
 	if err != nil {
 		panic(err)
 	}
+	db := encyclopedia.DB
 	err = db.View(func(tx *bolt.Tx) error {
 		wiki := tx.Bucket([]byte("wiki"))
 		pages := tx.Bucket([]byte("pages"))
@@ -571,26 +592,23 @@ func (a *Article) HTML() string {
 }
 
 // Lookup looks up an article
-func Lookup(title string) (article *Article) {
-	db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
-	if err != nil {
-		panic(err)
-	}
-	err = db.View(func(tx *bolt.Tx) error {
+func (e *Encyclopedia) Lookup(title string) (article *Article) {
+	db := e.DB
+	err := db.View(func(tx *bolt.Tx) error {
 		wiki := tx.Bucket([]byte("wiki"))
 		pages := tx.Bucket([]byte("pages"))
 		value := wiki.Get([]byte(title))
 		if value != nil {
 			value := pages.Get(value)
 			compressed := Compressed{}
-			err = proto.Unmarshal(value, &compressed)
+			err := proto.Unmarshal(value, &compressed)
 			if err != nil {
 				return err
 			}
 			pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 			compress.Mark1Decompress16(pressed, output)
 			a := Article{}
-			err := proto.Unmarshal(output, &a)
+			err = proto.Unmarshal(output, &a)
 			if err != nil {
 				return err
 			}
@@ -605,13 +623,10 @@ func Lookup(title string) (article *Article) {
 }
 
 // Search search for a page
-func Search(query string) []Result {
-	db, err := bolt.Open("wikipedia.db", 0600, &bolt.Options{ReadOnly: true})
-	if err != nil {
-		panic(err)
-	}
+func (e *Encyclopedia) Search(query string) []Result {
+	db := e.DB
 	parts, results := strings.Split(query, " "), make([]Result, 0, 8)
-	err = db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bolt.Tx) error {
 		pagesBucket := tx.Bucket([]byte("pages"))
 		indexBucket := tx.Bucket([]byte("index"))
 		ranksBucket := tx.Bucket([]byte("ranks"))
@@ -621,7 +636,7 @@ func Search(query string) []Result {
 			value := indexBucket.Get([]byte(part))
 			if len(value) > 0 {
 				compressed := Compressed{}
-				err = proto.Unmarshal(value, &compressed)
+				err := proto.Unmarshal(value, &compressed)
 				if err != nil {
 					return err
 				}
@@ -660,25 +675,37 @@ func Search(query string) []Result {
 			binary.LittleEndian.PutUint32(index, uint32(result.Index))
 			value := pagesBucket.Get(index)
 			compressed := Compressed{}
-			err = proto.Unmarshal(value, &compressed)
+			err := proto.Unmarshal(value, &compressed)
 			if err != nil {
 				return err
 			}
 			pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 			compress.Mark1Decompress16(pressed, output)
 			article := &Article{}
-			err := proto.Unmarshal(output, article)
+			err = proto.Unmarshal(output, article)
 			if err != nil {
 				return err
 			}
 			results[i].Article = article
+			if strings.ToLower(article.Title) == strings.ToLower(query) {
+				results[i].Rank = 1
+			}
+		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[j].Rank < results[i].Rank
+		})
+		if len(results) > 256 {
+			results = results[:256]
+		}
+		for i, result := range results {
 			for _, part := range parts {
 				part = strings.ToLower(strings.TrimSpace(part))
 				exp := regexp.MustCompile(part)
-				matches := exp.FindAllStringIndex(strings.ToLower(article.Text), -1)
+				matches := exp.FindAllStringIndex(strings.ToLower(result.Article.Text), -1)
 				results[i].Matches += len(matches)
 			}
 		}
+
 		sort.Slice(results, func(i, j int) bool {
 			if results[j].Count < results[i].Count {
 				return true
