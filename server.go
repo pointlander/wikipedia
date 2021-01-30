@@ -23,7 +23,7 @@ const EntryTemplate = `<html>
 `
 
 // Article is the endpoint for view an article
-func (e *Encyclopedia) Article(w http.ResponseWriter, r *http.Request, ps httprouter.Param) {
+func (e *Encyclopedia) Article(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	title := ps.ByName("article")
 	article := e.Lookup(title)
 	err := e.entryTemplate.Execute(w, article)
