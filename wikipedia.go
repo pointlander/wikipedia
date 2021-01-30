@@ -673,8 +673,8 @@ func (e *Encyclopedia) Search(query string) []Result {
 		sort.Slice(results, func(i, j int) bool {
 			return results[j].Rank < results[i].Rank
 		})
-		if len(results) > 256 {
-			results = results[:256]
+		if len(results) > 1024 {
+			results = results[:1024]
 		}
 		for i, result := range results {
 			index := make([]byte, 4)
