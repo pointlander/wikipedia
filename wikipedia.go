@@ -69,8 +69,9 @@ func Decompress(input io.Reader, output []byte) {
 
 // Encyclopedia is an encyclopedia
 type Encyclopedia struct {
-	DB            *bolt.DB
-	entryTemplate *template.Template
+	DB              *bolt.DB
+	entryTemplate   *template.Template
+	resultsTemplate *template.Template
 }
 
 // Open opens an encyclopedia
@@ -686,13 +687,25 @@ func (e *Encyclopedia) Search(query string) []Result {
 				return err
 			}
 			results[i].Article = article
+			if strings.ToLower(article.Title) == strings.ToLower(query) {
+				results[i].Rank = 1
+			}
+		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[j].Rank < results[i].Rank
+		})
+		if len(results) > 256 {
+			results = results[:256]
+		}
+		for i, result := range results {
 			for _, part := range parts {
 				part = strings.ToLower(strings.TrimSpace(part))
 				exp := regexp.MustCompile(part)
-				matches := exp.FindAllStringIndex(strings.ToLower(article.Text), -1)
+				matches := exp.FindAllStringIndex(strings.ToLower(result.Article.Text), -1)
 				results[i].Matches += len(matches)
 			}
 		}
+
 		sort.Slice(results, func(i, j int) bool {
 			if results[j].Count < results[i].Count {
 				return true
