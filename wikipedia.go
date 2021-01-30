@@ -670,6 +670,12 @@ func (e *Encyclopedia) Search(query string) []Result {
 				Rank:  r,
 			})
 		}
+		sort.Slice(results, func(i, j int) bool {
+			return results[j].Rank < results[i].Rank
+		})
+		if len(results) > 256 {
+			results = results[:256]
+		}
 		for i, result := range results {
 			index := make([]byte, 4)
 			binary.LittleEndian.PutUint32(index, uint32(result.Index))
@@ -690,18 +696,10 @@ func (e *Encyclopedia) Search(query string) []Result {
 			if strings.ToLower(article.Title) == strings.ToLower(query) {
 				results[i].Rank = 1
 			}
-		}
-		sort.Slice(results, func(i, j int) bool {
-			return results[j].Rank < results[i].Rank
-		})
-		if len(results) > 256 {
-			results = results[:256]
-		}
-		for i, result := range results {
 			for _, part := range parts {
 				part = strings.ToLower(strings.TrimSpace(part))
 				exp := regexp.MustCompile(part)
-				matches := exp.FindAllStringIndex(strings.ToLower(result.Article.Text), -1)
+				matches := exp.FindAllStringIndex(strings.ToLower(article.Text), -1)
 				results[i].Matches += len(matches)
 			}
 		}
