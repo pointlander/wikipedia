@@ -7,6 +7,7 @@ package wikipedia
 import (
 	"html/template"
 	"net/http"
+	"unicode"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -17,7 +18,7 @@ const EntryTemplate = `<html>
   <title>{{.Title}}</title>
  </head>
  <body>
-  {{.HTML}}
+  {{noescape .HTML}}
  </body>
 </html>
 `
@@ -25,6 +26,9 @@ const EntryTemplate = `<html>
 // Article is the endpoint for view an article
 func (e *Encyclopedia) Article(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	title := ps.ByName("article")
+	runes := []rune(title)
+	runes[0] = unicode.ToUpper(runes[0])
+	title = string(runes)
 	article := e.Lookup(title)
 	err := e.entryTemplate.Execute(w, article)
 	if err != nil {
@@ -32,9 +36,15 @@ func (e *Encyclopedia) Article(w http.ResponseWriter, r *http.Request, ps httpro
 	}
 }
 
+func noescape(str string) template.HTML {
+	return template.HTML(str)
+}
+
 // Server start server mode
 func Server(encyclopedia *Encyclopedia, router *httprouter.Router) {
-	entryTemplate, err := template.New("entry").Parse(EntryTemplate)
+	entryTemplate, err := template.New("entry").Funcs(template.FuncMap{
+		"noescape": noescape,
+	}).Parse(EntryTemplate)
 	if err != nil {
 		panic(err)
 	}
