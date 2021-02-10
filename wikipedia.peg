@@ -16,7 +16,13 @@ element <- heading6
          / heading1
          / hr
          / br
+         / ulist4
+         / ulist3
+         / ulist2
          / ulist1
+         / olist4
+         / olist3
+         / olist2
          / olist1
          / '[[' link ('|' text)? ']]'
          / wild
@@ -32,14 +38,14 @@ hr <- '----'  end
 br <- end end
 list_content <- '[[' link ('|' text)? ']]'
               / .
-ulist1 <- '* ' (list_content !end)* end ulist2*
-ulist2 <- '** ' (list_content !end)* end ulist3*
-ulist3 <- '*** ' (list_content !end)* end ulist4*
-ulist4 <- '**** ' (list_content !end)* end
-olist1 <- '# ' (list_content !end)* end olist2*
-olist2 <- '## ' (list_content !end)* end olist3*
-olist3 <- '### ' (list_content !end)* end olist4*
-olist4 <- '### ' (list_content !end)* end
+ulist1 <- '* ' (!end list_content)* end
+ulist2 <- '** ' (!end list_content)* end
+ulist3 <- '*** ' (!end list_content)* end
+ulist4 <- '**** ' (!end list_content)* end
+olist1 <- '# ' (!end list_content)* end
+olist2 <- '## ' (!end list_content)* end
+olist3 <- '### ' (!end list_content)* end
+olist4 <- '#### ' (!end list_content)* end
 end <- '\n'
      / '\r\n'
 wild <- .
