@@ -16,10 +16,12 @@ element <- heading6
          / heading1
          / hr
          / br
-         / ulist
-         / olist
-         / '[[' link ('|' text)? ']]'
+         / list
+         / free
+         / cite
          / wild
+free <- '[[' link ('|' text)? ']]'
+cite <- '<ref>{{cite ' (!'|' .)+ ('|' (!'=' .)+ '=' (!('|'/'}') .)+)* '}}</ref>'
 link <- (!('|' / ']]') .)*
 text <- (!('|' / ']]') .)*
 heading1 <- '=' <(!'=' .)+> '=' end
@@ -30,26 +32,26 @@ heading5 <- '=====' <(!'=====' .)+> '=====' end
 heading6 <- '======' <(!'======' .)+> '======' end
 hr <- '----'  end
 br <- end end
-list_content <- '[[' link ('|' text)? ']]'
-              / .
-ulist <- ( ulist4
-         / ulist3
-         / ulist2
-         / ulist1
-         )+
+list_content <- free
+              / wild
+list <- ( ulist4
+        / olist4
+        / ulist3
+        / olist3
+        / ulist2
+        / olist2
+        / ulist1
+        / olist1
+        )+
+l <- '*' / '#'
 ulist1 <- '* ' (!end list_content)* end
-ulist2 <- '** ' (!end list_content)* end
-ulist3 <- '*** ' (!end list_content)* end
-ulist4 <- '**** ' (!end list_content)* end
-olist <- ( olist4
-         / olist3
-         / olist2
-         / olist1
-         )+
+ulist2 <- l '* ' (!end list_content)* end
+ulist3 <- l l '* ' (!end list_content)* end
+ulist4 <- l l l '* ' (!end list_content)* end
 olist1 <- '# ' (!end list_content)* end
-olist2 <- '## ' (!end list_content)* end
-olist3 <- '### ' (!end list_content)* end
-olist4 <- '#### ' (!end list_content)* end
+olist2 <- l '# ' (!end list_content)* end
+olist3 <- l l '# ' (!end list_content)* end
+olist4 <- l l l '# ' (!end list_content)* end
 end <- '\n'
      / '\r\n'
 wild <- .

@@ -408,7 +408,8 @@ func Rank() {
 				node = node.up
 				for node != nil {
 					switch node.pegRule {
-					case rulelink:
+					case rulefree:
+						node := node.up
 						return string(parser.buffer[node.begin:node.end])
 					}
 					node = node.next
@@ -543,73 +544,53 @@ func WikiTextToHTML(input string) string {
 		panic(err)
 	}
 	text := ""
-	ulist := func(node *node32) {
+	link := func(node *node32) {
+		node = node.up
+		link := string(parser.buffer[node.begin:node.end])
+		if node.next != nil && node.next.pegRule == ruletext {
+			node = node.next
+			linkText := string(parser.buffer[node.begin:node.end])
+			text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), linkText)
+		} else {
+			text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), link)
+		}
+	}
+	content := func(node *node32) string {
+		node = node.up
+		list := ""
+		for node != nil {
+			switch node.pegRule {
+			case rulefree:
+				link(node)
+			default:
+				list += string(parser.buffer[node.begin:node.end])
+			}
+			node = node.next
+		}
+		return list
+	}
+	list := func(node *node32) {
 		lists := make([]string, 0, 8)
 		node = node.up
 		for node != nil {
-			target := 0
+			target, name := 0, ""
 			switch node.pegRule {
 			case ruleulist1:
-				target = 1
+				target, name = 1, "ul"
 			case ruleulist2:
-				target = 2
+				target, name = 2, "ul"
 			case ruleulist3:
-				target = 3
+				target, name = 3, "ul"
 			case ruleulist4:
-				target = 4
-			}
-			if depth := len(lists); depth < target {
-				for depth < target {
-					spaces := strings.Repeat(" ", depth)
-					if depth > 0 {
-						text += "\n"
-					}
-					text += fmt.Sprintf("%s<ul>\n%s <li>", spaces, spaces)
-					lists = append(lists, fmt.Sprintf("</li>\n%s</ul>\n", spaces))
-					depth++
-				}
-			} else if depth == target {
-				spaces := strings.Repeat(" ", depth)
-				text += fmt.Sprintf("%s</li>\n%s <li>", spaces, spaces)
-			} else {
-				for i := len(lists) - 1; i >= target; i-- {
-					if i < len(lists)-1 {
-						text += strings.Repeat(" ", i)
-					}
-					text += lists[i]
-				}
-				lists = lists[:target]
-				spaces := strings.Repeat(" ", len(lists))
-				text += fmt.Sprintf("%s<li>", spaces)
-			}
-			n := node.up
-			list := ""
-			for n != nil {
-				list += string(parser.buffer[n.begin:n.end])
-				n = n.next
-			}
-			text += strings.TrimSpace(list)
-			node = node.next
-		}
-		for i := len(lists) - 1; i >= 0; i-- {
-			text += lists[i]
-		}
-		lists = lists[:0]
-	}
-	olist := func(node *node32) {
-		lists := make([]string, 0, 8)
-		node = node.up
-		for node != nil {
-			target := 0
-			switch node.pegRule {
+				target, name = 4, "ul"
 			case ruleolist1:
-				target = 1
+				target, name = 1, "ol"
 			case ruleolist2:
-				target = 2
+				target, name = 2, "ol"
 			case ruleolist3:
-				target = 3
+				target, name = 3, "ol"
 			case ruleolist4:
-				target = 4
+				target, name = 4, "ol"
 			}
 			if depth := len(lists); depth < target {
 				for depth < target {
@@ -617,8 +598,8 @@ func WikiTextToHTML(input string) string {
 					if depth > 0 {
 						text += "\n"
 					}
-					text += fmt.Sprintf("%s<ol>\n%s <li>", spaces, spaces)
-					lists = append(lists, fmt.Sprintf("</li>\n%s</ol>\n", spaces))
+					text += fmt.Sprintf("%s<%s>\n%s <li>", spaces, name, spaces)
+					lists = append(lists, fmt.Sprintf("</li>\n%s</%s>\n", spaces, name))
 					depth++
 				}
 			} else if depth == target {
@@ -635,10 +616,13 @@ func WikiTextToHTML(input string) string {
 				spaces := strings.Repeat(" ", len(lists))
 				text += fmt.Sprintf("%s<li>", spaces)
 			}
-			n := node.up
-			list := ""
+			n, list := node.up, ""
 			for n != nil {
-				list += string(parser.buffer[n.begin:n.end])
+				switch n.pegRule {
+				case rulel:
+				case rulelist_content:
+					list += content(n)
+				}
 				n = n.next
 			}
 			text += strings.TrimSpace(list)
@@ -649,6 +633,7 @@ func WikiTextToHTML(input string) string {
 		}
 		lists = lists[:0]
 	}
+	cite := 0
 	element := func(node *node32) {
 		node = node.up
 		for node != nil {
@@ -669,20 +654,15 @@ func WikiTextToHTML(input string) string {
 				text += fmt.Sprintf("<hr/>\n")
 			case rulebr:
 				text += fmt.Sprintf("<br/>\n\n")
-			case rulelink:
-				link := string(parser.buffer[node.begin:node.end])
-				if node.next != nil && node.next.pegRule == ruletext {
-					node = node.next
-					linkText := string(parser.buffer[node.begin:node.end])
-					text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), linkText)
-				} else {
-					text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), link)
-				}
-				return
-			case ruleulist:
-				ulist(node)
-			case ruleolist:
-				olist(node)
+			case rulefree:
+				link(node)
+			case rulecite:
+				text += fmt.Sprintf("<sup class=\"tooltip\">%d<span class=\"tooltiptext\">%s</span></sup>",
+					cite,
+					strings.TrimSpace(string(parser.buffer[node.begin:node.end])))
+				cite++
+			case rulelist:
+				list(node)
 			case rulewild:
 				text += string(parser.buffer[node.begin:node.end])
 			}
@@ -791,31 +771,44 @@ func (e *Encyclopedia) Search(query string) []Result {
 		if len(results) > 1024 {
 			results = results[:1024]
 		}
-		for i, result := range results {
+		done := make(chan error, 8)
+		process := func(result *Result) {
 			index := make([]byte, 4)
 			binary.LittleEndian.PutUint32(index, uint32(result.Index))
 			value := pagesBucket.Get(index)
 			compressed := Compressed{}
 			err := proto.Unmarshal(value, &compressed)
 			if err != nil {
-				return err
+				done <- err
+				return
 			}
 			pressed, output := bytes.NewReader(compressed.Data), make([]byte, compressed.Size)
 			compress.Mark1Decompress16(pressed, output)
 			article := &Article{}
 			err = proto.Unmarshal(output, article)
 			if err != nil {
-				return err
+				done <- err
+				return
 			}
-			results[i].Article = article
+			result.Article = article
 			if strings.ToLower(article.Title) == strings.ToLower(query) {
-				results[i].Rank = 1
+				result.Rank = 1
 			}
 			for _, part := range parts {
 				part = strings.ToLower(strings.TrimSpace(part))
 				exp := regexp.MustCompile(part)
 				matches := exp.FindAllStringIndex(strings.ToLower(article.Text), -1)
-				results[i].Matches += len(matches)
+				result.Matches += len(matches)
+			}
+			done <- nil
+		}
+		for i := range results {
+			go process(&results[i])
+		}
+		for range results {
+			err := <-done
+			if err != nil {
+				return err
 			}
 		}
 

@@ -71,3 +71,12 @@ End Test`
 		t.Fatalf("not equal %s", html)
 	}
 }
+
+func TestWikiTextToHTMLCite(t *testing.T) {
+	text := `<ref>{{cite act |date=March 3, 1931 |article=14 |article-type=H.R. |legislature=[[71st United States Congress]] |title=An Act To make The Star-Spangled Banner the national anthem of the United States of America |url=https://uscode.house.gov/statviewer.htm?volume=46&page=1508}}</ref>`
+	html := WikiTextToHTML(text)
+	target := `<sup class="tooltip">0<span class="tooltiptext"><ref>{{cite act |date=March 3, 1931 |article=14 |article-type=H.R. |legislature=[[71st United States Congress]] |title=An Act To make The Star-Spangled Banner the national anthem of the United States of America |url=https://uscode.house.gov/statviewer.htm?volume=46&page=1508}}</ref></span></sup>`
+	if html != target {
+		t.Fatalf("not equal %s", html)
+	}
+}
