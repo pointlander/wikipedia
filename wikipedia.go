@@ -535,17 +535,6 @@ func Rank() {
 	}
 }
 
-var isAList = map[pegRule]bool{
-	ruleulist1: true,
-	ruleulist2: true,
-	ruleulist3: true,
-	ruleulist4: true,
-	ruleolist1: true,
-	ruleolist2: true,
-	ruleolist3: true,
-	ruleolist4: true,
-}
-
 // WikiTextToHTML converts wikitext to html
 func WikiTextToHTML(input string) string {
 	parser := &Wikipedia{Buffer: input}
@@ -553,82 +542,116 @@ func WikiTextToHTML(input string) string {
 	if err := parser.Parse(); err != nil {
 		panic(err)
 	}
-	text, lists := "", make([]string, 0, 8)
-	ulist := func(node *node32, target int) {
-		if depth := len(lists); depth < target {
-			for depth < target {
-				spaces := strings.Repeat(" ", depth)
-				if depth > 0 {
-					text += "\n"
-				}
-				text += fmt.Sprintf("%s<ul>\n%s <li>", spaces, spaces)
-				lists = append(lists, fmt.Sprintf("</li>\n%s</ul>\n", spaces))
-				depth++
-			}
-		} else if depth == target {
-			spaces := strings.Repeat(" ", depth)
-			text += fmt.Sprintf("%s</li>\n%s <li>", spaces, spaces)
-		} else {
-			for i := len(lists) - 1; i >= target; i-- {
-				if i < len(lists)-1 {
-					text += strings.Repeat(" ", i)
-				}
-				text += lists[i]
-			}
-			lists = lists[:target]
-			spaces := strings.Repeat(" ", len(lists))
-			text += fmt.Sprintf("%s<li>", spaces)
-		}
+	text := ""
+	ulist := func(node *node32) {
+		lists := make([]string, 0, 8)
 		node = node.up
-		list := ""
 		for node != nil {
-			list += string(parser.buffer[node.begin:node.end])
+			target := 0
+			switch node.pegRule {
+			case ruleulist1:
+				target = 1
+			case ruleulist2:
+				target = 2
+			case ruleulist3:
+				target = 3
+			case ruleulist4:
+				target = 4
+			}
+			if depth := len(lists); depth < target {
+				for depth < target {
+					spaces := strings.Repeat(" ", depth)
+					if depth > 0 {
+						text += "\n"
+					}
+					text += fmt.Sprintf("%s<ul>\n%s <li>", spaces, spaces)
+					lists = append(lists, fmt.Sprintf("</li>\n%s</ul>\n", spaces))
+					depth++
+				}
+			} else if depth == target {
+				spaces := strings.Repeat(" ", depth)
+				text += fmt.Sprintf("%s</li>\n%s <li>", spaces, spaces)
+			} else {
+				for i := len(lists) - 1; i >= target; i-- {
+					if i < len(lists)-1 {
+						text += strings.Repeat(" ", i)
+					}
+					text += lists[i]
+				}
+				lists = lists[:target]
+				spaces := strings.Repeat(" ", len(lists))
+				text += fmt.Sprintf("%s<li>", spaces)
+			}
+			n := node.up
+			list := ""
+			for n != nil {
+				list += string(parser.buffer[n.begin:n.end])
+				n = n.next
+			}
+			text += strings.TrimSpace(list)
 			node = node.next
 		}
-		text += strings.TrimSpace(list)
+		for i := len(lists) - 1; i >= 0; i-- {
+			text += lists[i]
+		}
+		lists = lists[:0]
 	}
-	olist := func(node *node32, target int) {
-		if depth := len(lists); depth < target {
-			for depth < target {
-				spaces := strings.Repeat(" ", depth)
-				if depth > 0 {
-					text += "\n"
-				}
-				text += fmt.Sprintf("%s<ol>\n%s <li>", spaces, spaces)
-				lists = append(lists, fmt.Sprintf("</li>\n%s</ol>\n", spaces))
-				depth++
-			}
-		} else if depth == target {
-			spaces := strings.Repeat(" ", depth)
-			text += fmt.Sprintf("%s</li>\n%s <li>", spaces, spaces)
-		} else {
-			for i := len(lists) - 1; i >= target; i-- {
-				if i < len(lists)-1 {
-					text += strings.Repeat(" ", i)
-				}
-				text += lists[i]
-			}
-			lists = lists[:target]
-			spaces := strings.Repeat(" ", len(lists))
-			text += fmt.Sprintf("%s<li>", spaces)
-		}
+	olist := func(node *node32) {
+		lists := make([]string, 0, 8)
 		node = node.up
-		list := ""
 		for node != nil {
-			list += string(parser.buffer[node.begin:node.end])
+			target := 0
+			switch node.pegRule {
+			case ruleolist1:
+				target = 1
+			case ruleolist2:
+				target = 2
+			case ruleolist3:
+				target = 3
+			case ruleolist4:
+				target = 4
+			}
+			if depth := len(lists); depth < target {
+				for depth < target {
+					spaces := strings.Repeat(" ", depth)
+					if depth > 0 {
+						text += "\n"
+					}
+					text += fmt.Sprintf("%s<ol>\n%s <li>", spaces, spaces)
+					lists = append(lists, fmt.Sprintf("</li>\n%s</ol>\n", spaces))
+					depth++
+				}
+			} else if depth == target {
+				spaces := strings.Repeat(" ", depth)
+				text += fmt.Sprintf("%s</li>\n%s <li>", spaces, spaces)
+			} else {
+				for i := len(lists) - 1; i >= target; i-- {
+					if i < len(lists)-1 {
+						text += strings.Repeat(" ", i)
+					}
+					text += lists[i]
+				}
+				lists = lists[:target]
+				spaces := strings.Repeat(" ", len(lists))
+				text += fmt.Sprintf("%s<li>", spaces)
+			}
+			n := node.up
+			list := ""
+			for n != nil {
+				list += string(parser.buffer[n.begin:n.end])
+				n = n.next
+			}
+			text += strings.TrimSpace(list)
 			node = node.next
 		}
-		text += strings.TrimSpace(list)
+		for i := len(lists) - 1; i >= 0; i-- {
+			text += lists[i]
+		}
+		lists = lists[:0]
 	}
 	element := func(node *node32) {
 		node = node.up
 		for node != nil {
-			if depth := len(lists); depth > 0 && !isAList[node.pegRule] {
-				for i := len(lists) - 1; i >= 0; i-- {
-					text += lists[i]
-				}
-				lists = lists[:0]
-			}
 			switch node.pegRule {
 			case ruleheading6:
 				text += fmt.Sprintf("<h6>%s</h6>\n", strings.TrimSpace(string(parser.buffer[node.up.begin:node.up.end])))
@@ -656,22 +679,10 @@ func WikiTextToHTML(input string) string {
 					text += fmt.Sprintf("<a href=\"/wiki/article/%s\">%s</a>", url.PathEscape(link), link)
 				}
 				return
-			case ruleulist1:
-				ulist(node, 1)
-			case ruleulist2:
-				ulist(node, 2)
-			case ruleulist3:
-				ulist(node, 3)
-			case ruleulist4:
-				ulist(node, 4)
-			case ruleolist1:
-				olist(node, 1)
-			case ruleolist2:
-				olist(node, 2)
-			case ruleolist3:
-				olist(node, 3)
-			case ruleolist4:
-				olist(node, 4)
+			case ruleulist:
+				ulist(node)
+			case ruleolist:
+				olist(node)
 			case rulewild:
 				text += string(parser.buffer[node.begin:node.end])
 			}
